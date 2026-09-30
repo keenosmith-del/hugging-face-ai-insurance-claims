@@ -1,0 +1,1 @@
+{"name":"hf-ai-insurance-claims-platform","private":true,"scripts":{"dev:server":"npm --prefix server run dev","dev:frontend":"npm --prefix frontend run dev","build":"npm --prefix server run build && npm --prefix frontend run build","test":"npm --prefix server test && cd ai-service && ./.venv/bin/python -m pytest"}}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+uploads/**
+!uploads/.gitkeep
+!uploads/claims/
+!uploads/claims/.gitkeep
+ai-service/.cache/

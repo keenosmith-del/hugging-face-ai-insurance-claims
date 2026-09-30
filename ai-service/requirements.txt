@@ -1,0 +1,16 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+transformers==4.47.1
+torch>=2.2,<3
+torchvision>=0.17,<1
+timm>=1.0.12,<2
+sentence-transformers==3.3.1
+opencv-python-headless>=4.10,<5
+pytesseract>=0.3.13
+Pillow>=11.0
+pypdf>=5.1
+python-docx>=1.1.2
+python-multipart>=0.0.20
+pytest>=8.3
+httpx>=0.28

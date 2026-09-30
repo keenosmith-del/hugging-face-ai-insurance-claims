@@ -1,0 +1,51 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "27017:27017"
+
+  ai-service:
+    build: ./ai-service
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      AI_DEVICE: cpu
+      HF_HOME: /models
+    volumes:
+      - ./uploads:/uploads
+      - hf-cache:/models
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  api:
+    build: ./server
+    depends_on:
+      - mongo
+      - ai-service
+    environment:
+      NODE_ENV: development
+      PORT: 5050
+      MONGODB_URI: mongodb://mongo:27017/insurance_claims
+      AI_SERVICE_URL: http://ai-service:8000
+      UPLOAD_DIR: /uploads
+    volumes:
+      - ./uploads:/app/uploads
+    ports:
+      - "5050:5050"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - api
+    environment:
+      VITE_API_URL: http://localhost:5050
+    ports:
+      - "5173:5173"
+
+volumes:
+  mongo-data:
+  hf-cache:
