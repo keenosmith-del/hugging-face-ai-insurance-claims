@@ -8,5 +8,5 @@ def extract_entities(text: str) -> list[dict]:
     # Surface likely policy/claim identifiers as transparent regex heuristics, not model NER.
     import re
     for kind, pattern in [("POLICY_NUMBER", r"(?i)\bpolicy\s*(?:no\.?|number|#)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{4,})"), ("CLAIM_NUMBER", r"(?i)\bclaim\s*(?:no\.?|number|#)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{4,})"), ("REGISTRATION", r"\b[A-Z]{2,3}\s?\d{3,6}\s?[A-Z]{0,3}\b")]:
-        for match in re.finditer(pattern, text): entities.append({"text": match.group(1) if match.lastindex else match.group(0), "label": kind, "confidence": 0.5, "source": "regex heuristic"})
+        for match in re.finditer(pattern, text): entities.append({"text": match.group(1) if match.lastindex else match.group(0), "label": kind, "confidence": None, "source": "regex heuristic", "requiresReview": True})
     return entities

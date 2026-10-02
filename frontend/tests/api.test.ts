@@ -1,0 +1,11 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { api } from '../src/api';
+const storage = new Map<string,string>();
+beforeEach(()=>{storage.clear();vi.stubGlobal('sessionStorage',{getItem:(key:string)=>storage.get(key),removeItem:(key:string)=>storage.delete(key)});vi.stubGlobal('location',{reload:vi.fn()});vi.stubGlobal('fetch',vi.fn());});
+describe('Fetch API integration',()=>{
+ it('sends authenticated JSON and returns actual response data',async()=>{storage.set('claims-token','synthetic-token');vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({_id:'synthetic-id'}),{status:201}));expect((await api.post('/api/claims',{title:'Synthetic'})).data._id).toBe('synthetic-id');expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/claims'),expect.objectContaining({method:'POST',body:'{"title":"Synthetic"}',headers:expect.objectContaining({Authorization:'Bearer synthetic-token','Content-Type':'application/json'})}));});
+ it('lets the browser choose multipart boundaries',async()=>{vi.mocked(fetch).mockResolvedValue(new Response('[]'));const data=new FormData();data.append('files',new Blob(['synthetic text']),'report.txt');await api.post('/api/claims/x/evidence',data);const options=vi.mocked(fetch).mock.calls[0][1]!;expect(options.body).toBe(data);expect(options.headers).not.toHaveProperty('Content-Type');});
+ it('preserves server validation and recoverable analysis error messages',async()=>{vi.mocked(fetch).mockResolvedValue(new Response('{"error":"Inference failed; retry"}',{status:503}));await expect(api.post('/api/claims/x/analyse')).rejects.toMatchObject({response:{data:{error:'Inference failed; retry'}}});});
+ it('handles successful cleanup without parsing an empty body',async()=>{vi.mocked(fetch).mockResolvedValue(new Response(null,{status:204}));expect((await api.delete('/api/claims/x/evidence/y')).data).toBeNull();});
+ it('clears expired authentication before returning to sign in',async()=>{storage.set('claims-token','expired-synthetic-token');vi.mocked(fetch).mockResolvedValue(new Response('{"error":"Sign in required"}',{status:401}));await expect(api.get('/api/claims')).rejects.toBeDefined();expect(storage.has('claims-token')).toBe(false);expect(location.reload).toHaveBeenCalledOnce();});
+});

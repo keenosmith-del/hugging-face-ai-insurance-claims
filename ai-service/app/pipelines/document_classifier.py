@@ -1,8 +1,8 @@
 from app.pipelines.common import hf_pipeline
 import re
 
-LABELS = ["driver license", "insurance policy", "police accident report", "vehicle registration document", "vehicle repair estimate", "vehicle repair invoice", "accident photograph", "other document"]
-ALIASES = {"driver license":"driver_license", "insurance policy":"insurance_policy", "police accident report":"police_report", "vehicle registration document":"vehicle_registration", "vehicle repair estimate":"repair_estimate", "vehicle repair invoice":"repair_invoice", "accident photograph":"accident_photo", "other document":"unknown"}
+LABELS = ["driver license", "insurance policy", "police accident report", "vehicle registration document", "vehicle repair estimate", "vehicle repair invoice", "accident photograph", "supporting correspondence", "other document"]
+ALIASES = {"driver license":"driver_license", "insurance policy":"insurance_policy", "police accident report":"police_report", "vehicle registration document":"vehicle_registration", "vehicle repair estimate":"repair_estimate", "vehicle repair invoice":"repair_invoice", "accident photograph":"accident_photo", "supporting correspondence":"supporting_correspondence", "other document":"unknown"}
 MODEL = "valhalla/distilbart-mnli-12-1"
 
 def keyword_classification(text: str) -> str | None:
@@ -20,11 +20,12 @@ def keyword_classification(text: str) -> str | None:
     return None
 
 def classify(text: str, image: bool = False) -> dict:
-    candidate_text = text[:2500] if text else "Photograph of a vehicle accident and possible vehicle damage."
+    if not text.strip(): raise ValueError("Classification requires extracted text")
+    candidate_text = text[:2500]
     result = hf_pipeline("zero-shot-classification", MODEL)(candidate_text, candidate_labels=LABELS, multi_label=False)
     label, score = result["labels"][0], float(result["scores"][0])
     prediction = {"classification": ALIASES[label], "confidence": score}
     fallback = keyword_classification(text)
     if fallback:
-        return {"classification": fallback, "confidence": score if fallback == prediction["classification"] else None, "model": MODEL, "source": "keyword fallback", "modelPrediction": prediction}
-    return {**prediction, "model": MODEL, "source": "Hugging Face zero-shot"}
+        return {"classification": fallback, "confidence": score if fallback == prediction["classification"] else None, "model": MODEL, "requiresReview": True, "scoreMeaning": "uncalibrated model score", "source": "keyword fallback", "modelPrediction": prediction}
+    return {**prediction, "model": MODEL, "source": "Hugging Face zero-shot", "requiresReview": True, "scoreMeaning": "uncalibrated model score"}

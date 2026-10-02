@@ -1,10 +1,13 @@
 from functools import lru_cache
 import numpy as np
+from app.pipelines.common import device
 from sentence_transformers import SentenceTransformer
 
 MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 @lru_cache(maxsize=1)
-def model(): return SentenceTransformer(MODEL)
+def model():
+    selected = device()
+    return SentenceTransformer(MODEL, device="cpu" if selected < 0 else f"cuda:{selected}")
 def embed(text: str) -> list[float]:
     if not text.strip(): return []
     return model().encode(text[:8000], normalize_embeddings=True).astype(float).tolist()

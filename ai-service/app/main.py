@@ -1,3 +1,6 @@
+from threading import Lock
+inference_lock = Lock()
+from app.pipelines.storage import safe_path
 from fastapi import FastAPI, HTTPException
 from app.schemas.analysis import ClaimAnalysisRequest, ClaimAnalysisResponse
 from app.pipelines.claim_analysis import analyse_claim
@@ -12,7 +15,7 @@ def analyse_document(payload: dict):
     path = payload.get("filePath")
     if not path: raise HTTPException(400, "filePath is required")
     try:
-        text = extract_text(path); return {"extractedText": text, "classification": classify(text)}
+        text = extract_text(safe_path(path)); return {"extractedText": text, "classification": classify(text)}
     except Exception as exc: raise HTTPException(422, str(exc))
 @app.post("/analyse/image")
 def analyse_image(payload: dict):
@@ -20,9 +23,14 @@ def analyse_image(payload: dict):
     path = payload.get("filePath")
     if not path: raise HTTPException(400, "filePath is required")
     try:
-        detections = detect_objects(path); return {"detections": detections, "damageObservations": damage_observations(detections)}
+        detections = detect_objects(safe_path(path)); return {"detections": detections, "damageObservations": damage_observations(detections)}
     except Exception as exc: raise HTTPException(422, str(exc))
 @app.post("/analyse/claim", response_model=ClaimAnalysisResponse)
 def analyse(payload: ClaimAnalysisRequest):
-    try: return analyse_claim(payload)
-    except Exception as exc: raise HTTPException(500, f"Claim analysis failed: {exc}")
+    if len(payload.evidence) > 50: raise HTTPException(422, "Maximum 50 evidence items per analysis")
+    if not inference_lock.acquire(blocking=False): raise HTTPException(409, "Inference service is busy; retry later")
+    try:
+        for item in payload.evidence: item.filePath = safe_path(item.filePath)
+        return analyse_claim(payload)
+    except Exception as exc: raise HTTPException(422, "Claim analysis failed; check evidence and service logs")
+    finally: inference_lock.release()

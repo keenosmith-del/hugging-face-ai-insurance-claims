@@ -1,6 +1,10 @@
+import { Audit } from './models/Audit';
+import { auth, protect } from './services/auth';
+import mongoose from 'mongoose';
 import express from 'express'; import cors from 'cors';
 import claims from './routes/claims'; import { checkAiHealth } from './services/aiClient';
-export const app = express(); app.use(cors()); app.use(express.json({ limit: '1mb' }));
-app.get('/health', async (_req, res) => { let ai: unknown; try { ai = await checkAiHealth(); } catch { ai = { status: 'unavailable' }; } res.json({ status: 'ok', service: 'claims-api', ai }); });
-app.use('/api/claims', claims);
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => { console.error('[API]', err.message); if (err.name === 'CastError') return res.status(400).json({ error: 'Invalid identifier' }); if (err.code === 11000) return res.status(409).json({ error: 'Duplicate record' }); const status = err.message === 'Unsupported file type' ? 415 : err.code === 'ECONNREFUSED' ? 503 : 500; res.status(status).json({ error: status === 500 ? 'Internal server error' : err.message }); });
+export const app = express(); app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173' })); app.use(express.json({ limit: '1mb' }));
+app.get('/health', async (_req, res) => { let ai: unknown; try { ai = await checkAiHealth(); } catch { ai = { status: 'unavailable' }; } const database = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'; res.status(database === 'connected' ? 200 : 503).json({ status: database === 'connected' ? 'ok' : 'degraded', database, service: 'claims-api', ai }); });
+app.use('/api/auth', auth);
+app.use('/api/claims', protect, (req, res, next) => { if (req.method !== 'GET') res.on('finish', () => { Audit.create({ actor: res.locals.user.username, action: req.method, resource: req.originalUrl.split('?')[0], statusCode: res.statusCode }).catch(error => console.error('[Audit] write failed', error.message)); }); next(); }, claims);
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => { console.error('[API]', err.message); if (err.name === 'CastError') return res.status(400).json({ error: 'Invalid identifier' }); if (err.code === 11000) return res.status(409).json({ error: 'Duplicate record' }); if (err.type === 'entity.too.large') return res.status(413).json({ error: 'JSON payload exceeds 1 MB limit' }); if (err.name === 'ValidationError' || err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid input' }); if (err.name === 'MulterError') return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: err.code }); const status = err.message === 'Unsupported file type' ? 415 : err.code === 'ECONNREFUSED' ? 503 : 500; res.status(status).json({ error: status === 500 ? 'Internal server error' : err.message }); });

@@ -11,7 +11,8 @@ class ClaimAnalysisRequest(BaseModel):
     claimId: str
     title: str
     description: str = ""
-    evidence: list[EvidenceInput] = Field(default_factory=list)
+    requiredEvidence: list[str] = Field(default_factory=lambda: ["insurance_policy", "police_report", "repair_estimate", "accident_photo"])
+    evidence: list[EvidenceInput] = Field(min_length=1, max_length=50)
 
 class PipelineFailure(BaseModel):
     pipeline: str
@@ -30,6 +31,10 @@ class EvidenceResult(BaseModel):
     errors: list[PipelineFailure] = Field(default_factory=list)
 
 class ClaimAnalysisResponse(BaseModel):
+    modelMetadata: dict[str, Any] = Field(default_factory=dict)
+    comparisons: list[dict[str, Any]] = Field(default_factory=list)
+    financialObservations: list[dict[str, Any]] = Field(default_factory=list)
+    checklist: list[dict[str, Any]] = Field(default_factory=list)
     claimId: str
     status: Literal["complete", "partial"]
     completedPipelines: list[str]

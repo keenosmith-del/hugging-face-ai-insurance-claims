@@ -1,160 +1,109 @@
 # Hugging Face AI Insurance Claims Platform
 
-A small portfolio prototype for AI-assisted vehicle claim evidence review. The application accepts documents and accident photographs, runs focused inference pipelines, stores evidence and structured outputs, and presents those outputs to a human assessor.
+A local portfolio prototype for multimodal insurance evidence review. React/TypeScript/Vite, Express/TypeScript, MongoDB/Mongoose and FastAPI integrate real Hugging Face inference, PyTorch, OpenCV and Tesseract. The existing frontend layout is preserved.
 
-> This educational portfolio project is not an insurance adjudication system. It does not approve or reject claims, determine fraud, establish coverage, or provide reliable repair quotations. Model outputs can be incomplete or wrong and require human review.
+**Decision support only.** AI does not approve claims, determine payable amounts, establish coverage/liability, detect proven fraud or grade physical damage. Explicit human reviews own outcomes.
 
-## Business problem and solution
+## Implemented workflow
 
-Claim evidence arrives in different formats and often needs manual reading and triage. This prototype centralises claim files, extracts text and entities from documents, identifies likely document types, detects generic objects in photographs, and compares evidence text semantically. Its checklist and summaries help organise review; they are not decisions.
+- Environment-based administrator bootstrap, salted scrypt passwords, expiring/revocable bearer sessions, protected APIs/downloads and assessor/administrator permissions.
+- Create, list/search, view/edit and delete claims; reopen resolved claims.
+- PDF, DOCX, TXT, JPEG, PNG, WebP and TIFF uploads with count/size, MIME/signature and duplicate checks; protected downloads and evidence removal. Replace evidence by removing and uploading again.
+- Real synchronous inference orchestration, persisted processing/failure state and polling; atomic duplicate-analysis guard and restart recovery.
+- Selectable PDF text, bounded scanned-PDF rasterisation/OCR, DOCX paragraphs/tables and image OCR.
+- Source-linked deterministic comparisons, contextual currency observations and per-claim configurable required-evidence checklists.
+- Human reviews with reviewer identity, timestamps, notes/outcome and analysis version; historical assessments/reviews and separate mutation audit records.
+- Changed claim text or evidence invalidates active findings. Prior versions remain available. Model failures are retained as partial results; service failures are retryable.
 
-## Architecture
+## Real model integrations
 
-```text
-React + Vite (5173)
-        | REST
-Node + Express + TypeScript (5050) ---- MongoDB (27017)
-        | HTTP                              |
-        v                                   | claims, evidence, outputs
-Python + FastAPI (8000) <------------------+
-  Transformers / PyTorch / OpenCV / Tesseract / Sentence Transformers
-```
-
-The Node API owns claims, uploads, persistence and orchestration. The Python service owns inference. Local upload files are mounted into both containers so the Python service can read the files saved by Node.
-
-## Stack and model choices
-
-| Capability | Model/tool | Framework and input | Output and limitations |
-|---|---|---|---|
-| OCR | Tesseract 5 via `pytesseract`, OpenCV preprocessing | OpenCV/Pillow image cleanup; TXT/DOCX/PDF text extraction via standard libraries | Text only; scanned PDFs without raster conversion report a partial failure. OCR errors are possible. |
-| Document classification | [`valhalla/distilbart-mnli-12-1`](https://huggingface.co/valhalla/distilbart-mnli-12-1) | Hugging Face Transformers zero-shot classifier; extracted text and candidate labels | Candidate label and model score. Clear document phrases can trigger a transparent keyword fallback; its source and raw model prediction are retained. General NLI model, not trained for insurance. Image evidence type comes from MIME type, not visual document classification. |
-| NER | [`dslim/bert-base-NER`](https://huggingface.co/dslim/bert-base-NER) | Transformers token classification over extracted text | General named entities; insurance identifiers are additionally surfaced with explicitly labelled regex heuristics. Not insurance-specialised. |
-| Object detection | [`facebook/detr-resnet-50`](https://huggingface.co/facebook/detr-resnet-50) | Transformers/PyTorch object detection on images | COCO object labels and boxes (e.g. car/person). It does not label vehicle parts or damage. |
-| Text embeddings | [`sentence-transformers/all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | Sentence Transformers over claim description and extracted document text | Normalised vectors and cosine similarity. Similarity is not evidence of truth or consistency. |
-| Image analysis | DETR generic object observations | Same model as object detection | Vehicle presence may be shown; no damage severity or part-level claims are made. |
-
-Models load lazily on first use and are cached by Hugging Face/Sentence Transformers. First inference downloads model weights and can take time and disk space. CPU inference works but may be slow. `HF_TOKEN` is optional for these public models; `AI_DEVICE=auto` selects CUDA when available, otherwise CPU. `AI_DEVICE` can also be set to a Transformers device index (`-1` for CPU, `0` for first CUDA GPU).
-
-## AI and evidence flow
-
-1. A user creates a claim and uploads up to ten files (20 MB each; PDF, common images, text and Word MIME types).
-2. Node stores uploads under `uploads/claims/<claim id>/` and persists metadata in MongoDB.
-3. The user starts analysis. Node posts claim text and evidence file references to FastAPI.
-4. FastAPI routes images through DETR and other evidence through text extraction, zero-shot classification and NER; text is embedded when available.
-5. The service returns per-evidence outputs, pipeline failures, pairwise text similarities, missing-evidence checklist, extracted currency amounts and review recommendations.
-6. Node persists the structured analysis on the claim and each evidence record. React fetches and displays those saved responses.
-
-The document checklist expects a policy, a police/accident report and a repair estimate/invoice. Extracted monetary amounts are summed without deduplicating or validating them, so this is only a rough extracted amount and may be misleading. The current implementation does not infer named damaged parts: COCO DETR has no such labels. No risk or fraud score is generated. Coverage wording is a workflow cue and must not be treated as a coverage decision.
-
-Each pipeline is isolated so an OCR/model error can result in `partial` analysis while retaining successful evidence results. Error details are returned per pipeline; review uploaded inputs before relying on any output.
-
-## Repository map
-
-```text
-frontend/                 React, TypeScript, Vite UI
-server/                   Express API, Mongoose models, local storage
-ai-service/app/pipelines/ OCR, classification, NER, detection, embeddings, orchestration
-sample-data/              Synthetic text fixtures
-uploads/                  Local evidence storage (ignored by git)
-docker-compose.yml        MongoDB, Node, Python, frontend
-```
-
-## API
-
-| Method | Endpoint | Purpose |
+| Capability | Implementation | Limits |
 |---|---|---|
-| GET | `/health` | Node health and AI service availability |
-| GET / POST | `/api/claims` | List claims / create claim (`title`, `description`) |
-| GET / DELETE | `/api/claims/:id` | Retrieve claim and evidence / delete claim, evidence metadata and local uploads |
-| POST | `/api/claims/:id/evidence` | Multipart upload; use repeated `files` fields |
-| GET | `/api/claims/:id/evidence` | Evidence metadata and saved outputs |
-| POST | `/api/claims/:id/analyse` | Run AI analysis and persist it |
-| POST | `/api/claims/:id/review` | Record a human outcome (`approved`, `declined`, `more_information_required`) and required notes |
-| GET | `/api/claims/:id/analysis` | Retrieve saved assessment |
-| GET | `http://localhost:8000/health` | FastAPI health |
-| POST | `http://localhost:8000/analyse/document` | Standalone document processing (`filePath`) |
-| POST | `http://localhost:8000/analyse/image` | Standalone image processing (`filePath`) |
-| POST | `http://localhost:8000/analyse/claim` | Main structured claim analysis |
+| Classification | `valhalla/distilbart-mnli-12-1`, Transformers zero-shot classification | General NLI model; transparent keyword overrides retain raw prediction. Scores are uncalibrated. |
+| NER | `dslim/bert-base-NER`, Transformers | General entities; policy/claim/registration rules are labelled separately. |
+| Vision | `facebook/detr-resnet-50`, Transformers/PyTorch | COCO objects and bounding boxes, no damaged parts or severity. Empty detections are valid. |
+| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` | Real normalised vectors/cosine similarity; similarity is not factual agreement. |
+| OCR | OpenCV, Tesseract, PDFium | Sensitive to input quality; 20-page PDF limit, bounded rasterisation and OCR timeouts. |
 
-## Data model
+Models load lazily and require initial network downloads/cache space. CPU works. `AI_DEVICE=auto` selects CUDA when available; `cpu`/`-1` selects CPU. Model IDs are retained; exact model revision pinning/evaluation remains future work.
 
-MongoDB has two collections: `claims` and `evidences`. A claim contains a generated claim number, title, description, status, assessment fields, structured analysis, human-review outcome/notes and timestamps. Evidence stores claim reference, filename, MIME type, local path, inferred evidence type, classifier result, OCR text, NER entities and per-item AI outputs. Uploaded binary files remain on local disk. Local storage can be replaced behind the storage service with S3, Azure Blob Storage or GCS later.
+## Start locally
 
-## Human review and cleanup
+Requirements: Node 20.19+, Python 3.11, MongoDB, Tesseract (`brew install tesseract` on macOS).
 
-After analysis, the claim detail page presents a **Review and record an outcome** form. A human assessor can record an approval, decline or request for more information, with required notes. Approval and decline move the claim to `Resolved`; a request moves it to `Awaiting Information`. The AI never selects or submits that outcome. Adding new evidence clears the old assessment and review so it must be analysed again. Use **Delete claim** on any claim detail page to delete the claim, its evidence records and its local upload directory; the UI asks for confirmation first.
-
-## Run locally
-
-Requirements: Node.js 20+, npm, Python 3.11, MongoDB, and the Tesseract executable. On macOS, install Tesseract with your preferred package manager. PyTorch wheel selection can depend on operating system and accelerator; see the official PyTorch install selector if the pinned dependency resolution needs adjustment.
-
-```bash
+```sh
 cp .env.example .env
-# Start MongoDB separately, then:
-cd ai-service
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+npm --prefix server ci
+npm --prefix frontend ci
+python3.11 -m venv ai-service/.venv
+ai-service/.venv/bin/pip install -r ai-service/requirements.txt
 ```
 
-In separate terminals:
+Set `BOOTSTRAP_USERNAME` and a unique `BOOTSTRAP_PASSWORD` (minimum 12 characters) in `.env`. Existing users are not overwritten. Start your MongoDB service, or `docker compose up -d mongo`. In separate terminals from the repository root:
 
-```bash
-cd server && npm install && npm run dev
-cd frontend && npm install && npm run dev
+```sh
+ai-service/.venv/bin/python -m uvicorn app.main:app --app-dir ai-service --host 127.0.0.1 --port 8000
+npm --prefix server run dev
+npm --prefix frontend run dev
 ```
 
-Open `http://localhost:5173`. The default frontend API URL is `http://localhost:5050`. Create a claim, add evidence, and choose **Analyse claim**. Add sample text documents from `sample-data/claims/claim-001/` to explore the document pipelines. OCR of images additionally requires a working Tesseract executable in `PATH`.
+Open http://localhost:5173 and sign in. Node loads root `.env`; Python settings must be exported in its terminal. Public model weights require no HF_TOKEN. Local upload defaults resolve to the same repository `uploads/` folder.
 
-## Environment variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `NODE_ENV` | `development` | Node runtime mode |
-| `PORT` | `5050` | Node API port |
-| `MONGODB_URI` | local MongoDB URI | Mongo connection string |
-| `AI_SERVICE_URL` | `http://localhost:8000` | FastAPI base URL |
-| `UPLOAD_DIR` | `./uploads` | Local upload root |
-| `HF_TOKEN` | empty | Optional Hugging Face token |
-| `AI_DEVICE` | `auto` | `auto`, `-1` CPU, or an accelerator index |
-
-Copy `.env.example`; never commit `.env` or tokens.
-
-## Docker
-
-Docker Compose starts MongoDB, Node, FastAPI, and the Vite development server:
-
-```bash
+```sh
 docker compose up --build
 ```
 
-Open `http://localhost:5173`; APIs are at ports 5050 and 8000. Model weights are cached in the `hf-cache` volume. The Compose AI service uses CPU by default. The first model use downloads weights, so allow network access and storage. To pass a Hugging Face token, place it in the local `.env` file. For GPU execution, configure the AI container and its device runtime for the local platform.
+Compose preserves defaults 5173/5050/8000/27017, shares `/uploads` and caches model weights in `hf-cache`. Database/AI host ports bind to loopback. Populate root `.env` bootstrap settings before starting.
 
-## Tests and verification
+## Configuration
 
-After creating the Python 3.11 environment described above, run all automated tests from the repository root:
+| Variable | Default/purpose |
+|---|---|
+| PORT | 5050 |
+| MONGODB_URI | mongodb://localhost:27017/insurance_claims |
+| AI_SERVICE_URL | http://localhost:8000 |
+| UPLOAD_DIR | Repository uploads locally; /uploads in containers |
+| AI_TIMEOUT_MS | 900000 |
+| FRONTEND_ORIGIN | http://localhost:5173 |
+| VITE_API_URL | http://localhost:5050 |
+| BOOTSTRAP_USERNAME / BOOTSTRAP_PASSWORD | Required for initial administrator creation |
+| HF_TOKEN | Optional public-model download credential |
+| AI_DEVICE | auto |
+| HF_HOME / HF_HUB_OFFLINE | Optional Python model cache/offline configuration |
 
-```bash
+## API
+
+All claim routes require a bearer session. Assessor accounts share the synthetic workspace. Administrators additionally create users/delete claims.
+
+| Method | Route | Action |
+|---|---|---|
+| POST | /api/auth/login, /api/auth/logout | Create/revoke session |
+| POST | /api/auth/users | Administrator creates assessor/administrator |
+| GET/POST | /api/claims | Search/list or create (title, description, optional requiredEvidence) |
+| GET/PATCH/DELETE | /api/claims/:id | View/edit/delete claim |
+| POST | /api/claims/:id/reopen | Reopen resolved claim |
+| GET/POST | /api/claims/:id/evidence | List/upload files (repeated files multipart fields) |
+| GET | /api/claims/:id/evidence/:evidenceId/download | Protected original download |
+| DELETE | /api/claims/:id/evidence/:evidenceId | Remove evidence/invalidate analysis |
+| POST | /api/claims/:id/analyse | Run real inference and persist assessment |
+| POST | /api/claims/:id/review | Human outcome and required notes |
+| GET | /api/claims/:id/analysis | Saved assessment |
+| GET | /health | API/AI health |
+
+FastAPI `/health`, `/analyse/document`, `/analyse/image`, `/analyse/claim` are internal inference endpoints. Evidence paths must resolve inside its UPLOAD_DIR. Do not expose FastAPI publicly.
+
+## Verification and status
+
+```sh
+npm run build
 npm test
+TEST_USERNAME=YOUR_USERNAME TEST_PASSWORD=YOUR_PASSWORD python3 scripts/verify-live.py
 ```
 
-The Python tests exercise the health endpoint, response schema/partial-failure behavior, OpenCV preprocessing, text extraction, currency parsing and the transparent document keyword fallback without downloading model weights. The Node tests cover health handling, claim creation, evidence metadata persistence, AI-service handoff, human review outcomes and claim deletion. `npm run build` builds both TypeScript applications. The live workflow was also exercised with the synthetic policy, report and estimate through Node, FastAPI and MongoDB using downloaded Hugging Face weights. Automated tests do not claim to validate model accuracy.
+Unit tests use mocks for isolated orchestration. The separate live script uses actual Express, MongoDB, FastAPI and model weights. Synthetic fixtures contain text, a scanned PDF and a clearly labelled generated accident photograph plus a drawn vehicle schematic. These are not a model-accuracy benchmark.
 
-## Limitations and future work
+See [completion audit](docs/COMPLETION_AUDIT.md), [exact demo walkthrough](docs/DEMO_WALKTHROUGH.md), and [architecture](docs/ARCHITECTURE.md). Readiness is conditional on every acceptance check, including browser and photograph verification; successful unit tests alone do not establish readiness.
 
-- No insurer rules, policy coverage decision, fraud detection, claim approval/rejection, repair estimate or liability judgement.
-- The chosen NER and document model are general-purpose and may misclassify domain documents; scores are model scores, not calibrated probabilities.
-- DETR's generic COCO taxonomy cannot identify damaged vehicle parts or damage severity.
-- Tesseract image OCR is sensitive to blur, angle, handwriting and low contrast. Scanned PDFs need page rasterisation before OCR.
-- The sample extraction sums every detected Rand-like amount and does not distinguish total, excess, tax or currency context.
-- Local storage, no authentication, basic MIME/file-size checks and no retention controls make this unsuitable for real claims or sensitive personal data.
-- Future work: robust PDF rasterisation and page limits, domain validation, calibrated models with representative labelled data, image embeddings, audit trails, access controls, secure object storage and model evaluation.
+## Security and engineering limits
 
-## Deployment options
-
-For a later deployment, React could run on Vercel, the Node and FastAPI containers on Render, Azure Container Apps or Cloud Run, MongoDB on Atlas, and evidence files on S3, Azure Blob Storage or GCS. Deployment, secrets management, privacy controls and model-serving cost are outside this prototype.
-
-## Skills demonstrated
-
-React and TypeScript UI; Express REST API; Mongoose persistence; FastAPI/Pydantic inference service; Hugging Face Transformers and Hub models; PyTorch object detection; OpenCV and OCR; NER; sentence embeddings and semantic similarity; multimodal evidence orchestration; partial-failure handling; Docker Compose; API and pipeline testing; responsible AI limitations documentation.
+Use synthetic data only. This local single-instance prototype has no tenant isolation, malware scanner, production TLS, tamper-proof audit, transactional filesystem/database cleanup or validated insurer rules. Session tokens in sessionStorage require protection against XSS. Histories require retention limits for sustained operation. Concurrent evidence mutations and worker interruption need further production hardening. Extraction is bounded/truncated and rule comparisons understand only explicit labelled fields. Missing evidence is not deception. Monetary observations are contextual values requiring review and are never summed into a claim total.

@@ -1,0 +1,6 @@
+export type PipelineFailure = { pipeline: string; error: string };
+export type Classification = { classification: string; confidence?: number | null; model?: string | null; source?: string; requiresReview?: boolean; modelPrediction?: {classification:string; confidence:number} };
+export type Entity = { text:string; label:string; confidence?:number|null; model?:string; source?:string };
+export type Detection = { label:string; confidence:number; model:string; box:{xmin:number;ymin:number;xmax:number;ymax:number} };
+export type EvidenceResult = { id:string; filename:string; evidenceType:string; documentClassification?:Classification|null; extractedText:string; entities:Entity[]; objectDetections:Detection[]; damageObservations:{observation:string;confidence:number;model:string}[]; errors:PipelineFailure[]; embedding?:number[]|null };
+export type ClaimAnalysis = { claimId:string; status:'complete'|'partial'; completedPipelines:string[]; failedPipelines:PipelineFailure[]; evidence:EvidenceResult[]; evidenceSimilarity:{leftEvidenceId:string;rightEvidenceId:string;similarity:number}[]; comparisons:Record<string,unknown>[]; financialObservations:Record<string,unknown>[]; checklist:Record<string,unknown>[]; modelMetadata?:Record<string,unknown> };

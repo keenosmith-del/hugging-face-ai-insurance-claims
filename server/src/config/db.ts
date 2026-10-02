@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 export async function connectDatabase(uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/insurance_claims') {
-  await mongoose.connect(uri);
+  mongoose.set('bufferCommands', false);
+  await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });
   console.info('[DB] MongoDB connected');
 }

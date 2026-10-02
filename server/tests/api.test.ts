@@ -1,8 +1,9 @@
+vi.mock('node:fs/promises', () => ({ default: { readFile: vi.fn().mockResolvedValue(Buffer.from('synthetic text')), unlink: vi.fn() } }));
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/services/aiClient', () => ({ checkAiHealth: vi.fn(), analyseClaim: vi.fn() }));
-vi.mock('../src/models/Claim', () => ({ Claim: { create: vi.fn(), findById: vi.fn() } }));
-vi.mock('../src/models/Evidence', () => ({ Evidence: { insertMany: vi.fn(), find: vi.fn(), deleteMany: vi.fn() } }));
+vi.mock('../src/models/Claim', () => ({ Claim: { create: vi.fn(), findById: vi.fn(), updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }) } }));
+vi.mock('../src/models/Evidence', () => ({ Evidence: { countDocuments: vi.fn().mockResolvedValue(0), exists: vi.fn().mockResolvedValue(null), insertMany: vi.fn(), find: vi.fn(), deleteMany: vi.fn() } }));
 vi.mock('../src/services/storage', () => ({ upload: { array: () => (_req: unknown, _res: unknown, next: () => void) => next() }, deleteClaimUploads: vi.fn() }));
 
 import { app } from '../src/app';
@@ -13,7 +14,7 @@ import { addEvidence, createClaim, deleteClaim, runAnalysis, submitHumanReview }
 import { deleteClaimUploads } from '../src/services/storage';
 
 function responseDouble() {
-  const response: any = { statusCode: 200, body: undefined };
+  const response: any = { statusCode: 200, body: undefined, locals: { user: { username: 'synthetic-assessor' } } };
   response.status = (code: number) => { response.statusCode = code; return response; };
   response.json = (body: unknown) => { response.body = body; return response; };
   return response;
@@ -25,7 +26,7 @@ describe('claims API handlers', () => {
     const route = (app as any)._router.stack.find((layer: any) => layer.route?.path === '/health').route.stack[0].handle;
     const response = responseDouble();
     await route({}, response);
-    expect(response.body).toMatchObject({ status: 'ok', ai: { status: 'ok' } });
+    expect(response.body).toMatchObject({ status: 'degraded', database: 'disconnected', ai: { status: 'ok' } });
   });
 
   it('validates a claim title', async () => {
@@ -46,8 +47,8 @@ describe('claims API handlers', () => {
   });
 
   it('persists uploaded evidence metadata for an existing claim', async () => {
-    vi.mocked(Claim.findById).mockResolvedValue({ _id: 'claim-id' } as never);
-    vi.mocked(Evidence.insertMany).mockResolvedValue([{ _id: 'evidence-id', filename: 'report.txt' }] as never);
+    vi.mocked(Claim.findById).mockResolvedValue({ _id: 'claim-id', save: vi.fn() } as never);
+    vi.mocked(Evidence.insertMany).mockResolvedValue([{ _id: 'evidence-id', filename: 'report.txt', toObject: () => ({ _id: 'evidence-id', filename: 'report.txt' }) }] as never);
     const response = responseDouble();
     await addEvidence({ params: { id: 'claim-id' }, files: [{ originalname: 'report.txt', mimetype: 'text/plain', path: '/uploads/report.txt', size: 25 }] } as any, response, vi.fn());
     expect(response.statusCode).toBe(201);
@@ -55,8 +56,8 @@ describe('claims API handlers', () => {
   });
 
   it('calls the AI service and saves its structured assessment', async () => {
-    const claim: any = { _id: 'claim-id', title: 'Collision', description: 'Rear impact', status: 'Draft', save: vi.fn() };
-    const evidence: any = { _id: 'evidence-id', filename: 'report.txt', save: vi.fn() };
+    const claim: any = { _id: 'claim-id', title: 'Collision', description: 'Rear impact', status: 'Draft', save: vi.fn(), analysisHistory: [], reviewHistory: [], auditHistory: [] };
+    const evidence: any = { _id: 'evidence-id', filename: 'report.txt', save: vi.fn(), analysisHistory: [], reviewHistory: [], auditHistory: [] };
     vi.mocked(Claim.findById).mockResolvedValue(claim);
     vi.mocked(Evidence.find).mockResolvedValue([evidence] as never);
     vi.mocked(analyseClaim).mockResolvedValue({ status: 'complete', evidence: [{ id: 'evidence-id', evidenceType: 'police_report', extractedText: 'Collision report' }], coverageAssessment: 'Needs review', missingInformation: [], riskIndicators: [], detectedDamage: [], recommendations: ['Review'] } as never);
@@ -79,7 +80,7 @@ describe('claims API handlers', () => {
   });
 
   it('stores a human decision and moves the claim to the correct status', async () => {
-    const claim: any = { _id: 'claim-id', analysis: { status: 'complete' }, status: 'Awaiting Review', save: vi.fn() };
+    const claim: any = { _id: 'claim-id', analysis: { status: 'complete' }, status: 'Awaiting Review', save: vi.fn(), analysisHistory: [], reviewHistory: [], auditHistory: [] };
     vi.mocked(Claim.findById).mockResolvedValue(claim);
     const response = responseDouble();
     await submitHumanReview({ params: { id: 'claim-id' }, body: { outcome: 'more_information_required', notes: 'Please provide the original repair invoice.' } } as any, response, vi.fn());
@@ -90,7 +91,7 @@ describe('claims API handlers', () => {
   });
 
   it('records an assessor approval as resolved without an AI-generated decision', async () => {
-    const claim: any = { _id: 'claim-id', analysis: { status: 'complete' }, status: 'Awaiting Review', save: vi.fn() };
+    const claim: any = { _id: 'claim-id', analysis: { status: 'complete' }, status: 'Awaiting Review', save: vi.fn(), analysisHistory: [], reviewHistory: [], auditHistory: [] };
     vi.mocked(Claim.findById).mockResolvedValue(claim);
     const response = responseDouble();
     await submitHumanReview({ params: { id: 'claim-id' }, body: { outcome: 'approved', notes: 'Manual review complete; supporting documents checked.' } } as any, response, vi.fn());
@@ -110,4 +111,31 @@ describe('claims API handlers', () => {
     expect(claim.deleteOne).toHaveBeenCalledOnce();
     expect(response.statusCode).toBe(204);
   });
+});
+
+describe('analysis state and failure guards', () => {
+ it('rejects duplicate analysis without invoking inference', async () => {
+  vi.mocked(Claim.findById).mockResolvedValue({ _id:'claim-id', status:'Analysing' } as never);
+  vi.mocked(Evidence.find).mockResolvedValue([{_id:'e1'}] as never);
+  vi.mocked(Claim.updateOne).mockResolvedValue({modifiedCount:0} as never);
+  const response = responseDouble(); const before = vi.mocked(analyseClaim).mock.calls.length;
+  await runAnalysis({params:{id:'claim-id'}} as any,response,vi.fn());
+  expect(response.statusCode).toBe(409); expect(vi.mocked(analyseClaim).mock.calls.length).toBe(before);
+  vi.mocked(Claim.updateOne).mockResolvedValue({modifiedCount:1} as never);
+ });
+ it('persists retryable failure when inference is unavailable', async () => {
+  const claim:any = {_id:'claim-id',title:'Synthetic',status:'Draft',save:vi.fn()};
+  vi.mocked(Claim.findById).mockResolvedValue(claim); vi.mocked(Evidence.find).mockResolvedValue([{_id:'e1'}] as never);
+  vi.mocked(analyseClaim).mockRejectedValueOnce(new Error('Connection refused'));
+  const response=responseDouble(); await runAnalysis({params:{id:'claim-id'}} as any,response,vi.fn());
+  expect(response.statusCode).toBe(503); expect(claim.analysisStatus).toBe('failed'); expect(claim.analysisStale).toBe(true); expect(claim.status).toBe('Ready for Analysis'); expect(claim.save).toHaveBeenCalledTimes(2);
+ });
+ it('rejects review of stale findings', async () => {
+  vi.mocked(Claim.findById).mockResolvedValue({analysis:{status:'complete'},analysisStale:true} as never);
+  const response=responseDouble();await submitHumanReview({params:{id:'claim-id'},body:{outcome:'approved',notes:'Example'}} as any,response,vi.fn());expect(response.statusCode).toBe(409);
+ });
+ it('rejects an empty human review note', async () => {
+  vi.mocked(Claim.findById).mockResolvedValue({analysis:{status:'complete'}} as never);
+  const response=responseDouble();await submitHumanReview({params:{id:'claim-id'},body:{outcome:'approved',notes:'  '}} as any,response,vi.fn());expect(response.statusCode).toBe(400);
+ });
 });

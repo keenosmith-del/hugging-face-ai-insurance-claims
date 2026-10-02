@@ -1,5 +1,9 @@
 SYNTHETIC SAMPLE — NOT A REAL POLICE REPORT
 Accident report number: DEMO-AR-2026-0042
 Date: 14 September 2026
-Location: Example Road, Cape Town
+Location: Fictional Avenue
 The example vehicle was involved in a low-speed collision. No personal details in this sample refer to a real person.
+
+Claimant: Alex Example
+Registration: DEMO123
+Accident date: 2026-09-14

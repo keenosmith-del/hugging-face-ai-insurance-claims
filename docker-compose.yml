@@ -1,38 +1,61 @@
 services:
   mongo:
     image: mongo:7
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
     volumes:
       - mongo-data:/data/db
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
 
   ai-service:
     build: ./ai-service
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 10
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       AI_DEVICE: cpu
       HF_HOME: /models
+      UPLOAD_DIR: /uploads
+      BOOTSTRAP_USERNAME: ${BOOTSTRAP_USERNAME:-}
+      BOOTSTRAP_PASSWORD: ${BOOTSTRAP_PASSWORD:-}
     volumes:
       - ./uploads:/uploads
       - hf-cache:/models
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     restart: unless-stopped
 
   api:
     build: ./server
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5050/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
     depends_on:
-      - mongo
-      - ai-service
+      mongo:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
     environment:
       NODE_ENV: development
       PORT: 5050
       MONGODB_URI: mongodb://mongo:27017/insurance_claims
       AI_SERVICE_URL: http://ai-service:8000
       UPLOAD_DIR: /uploads
+      BOOTSTRAP_USERNAME: ${BOOTSTRAP_USERNAME:-}
+      BOOTSTRAP_PASSWORD: ${BOOTSTRAP_PASSWORD:-}
     volumes:
-      - ./uploads:/app/uploads
+      - ./uploads:/uploads
     ports:
       - "5050:5050"
     restart: unless-stopped
